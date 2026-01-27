@@ -52,25 +52,20 @@ export const logsApi = {
 
 // Reports API
 export const reportsApi = {
-    getAll: () => fetchApi('/reports'),
-    getById: (id) => fetchApi(`/reports/${id}`),
-    create: (report) =>
-        fetchApi('/reports', {
-            method: 'POST',
-            body: JSON.stringify(report),
-        }),
-    update: (id, report) =>
-        fetchApi(`/reports/${id}`, {
-            method: 'PUT',
-            body: JSON.stringify(report),
-        }),
-    delete: (id) =>
-        fetchApi(`/reports/${id}`, {
-            method: 'DELETE',
-        }),
-    execute: (sql, limit = 100) =>
-        fetchApi('/reports/execute', {
-            method: 'POST',
-            body: JSON.stringify({ sql, limit }),
-        }),
+    getUserStatistics: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/user-statistics${query ? `?${query}` : ''}`);
+    },
+    getTeacherActivity: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/teacher-activity${query ? `?${query}` : ''}`);
+    },
+    getStudentActivity: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/student-activity${query ? `?${query}` : ''}`);
+    },
+    getCourseActivity: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/course-activity${query ? `?${query}` : ''}`);
+    },
 };

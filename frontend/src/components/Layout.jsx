@@ -4,7 +4,7 @@ import {
     BookOpen,
     Users,
     Activity,
-    FileCode,
+    FileText,
     GraduationCap,
     Menu,
     X,
@@ -17,7 +17,7 @@ const navItems = [
     { path: '/courses', icon: BookOpen, label: 'Courses', description: 'Course Reports' },
     { path: '/users', icon: Users, label: 'Users', description: 'Progress Tracking' },
     { path: '/logs', icon: Activity, label: 'Activity', description: 'Login Logs' },
-    { path: '/reports', icon: FileCode, label: 'Custom SQL', description: 'Custom Reports' },
+    { path: '/reports', icon: FileText, label: 'Report', description: 'Generate Report' },
 ]
 
 export default function Layout() {

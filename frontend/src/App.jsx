@@ -4,7 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Courses from './pages/Courses'
 import UserProgress from './pages/UserProgress'
 import LogActivity from './pages/LogActivity'
-import CustomReports from './pages/CustomReports'
+import Reports from './pages/Reports'
 
 function App() {
     return (
@@ -15,7 +15,7 @@ function App() {
                     <Route path="courses" element={<Courses />} />
                     <Route path="users" element={<UserProgress />} />
                     <Route path="logs" element={<LogActivity />} />
-                    <Route path="reports" element={<CustomReports />} />
+                    <Route path="reports" element={<Reports />} />
                 </Route>
             </Routes>
         </BrowserRouter>
