@@ -595,4 +595,459 @@ router.get('/course-activity', async (req, res) => {
     }
 });
 
+// ============================================================
+// GET /api/reports/teacher-compliance
+// Teacher Compliance Tracker Report
+// ============================================================
+router.get('/teacher-compliance', async (req, res) => {
+    try {
+        // Get current month range
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+        const startTimestamp = Math.floor(monthStart.getTime() / 1000);
+        const endTimestamp = Math.floor(monthEnd.getTime() / 1000);
+
+        // Previous month for comparison
+        const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+        const prevStartTimestamp = Math.floor(prevMonthStart.getTime() / 1000);
+        const prevEndTimestamp = Math.floor(prevMonthEnd.getTime() / 1000);
+
+        const monthName = monthStart.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+
+        // 1. Teacher Compliance Table - Teachers with their courses and activity count
+        const teacherComplianceQuery = `
+            SELECT 
+                u.id as user_id,
+                u.firstname,
+                u.lastname,
+                u.email,
+                c.id as course_id,
+                c.fullname as course_name,
+                c.shortname as course_shortname,
+                COUNT(DISTINCT l.id) as activity_count
+            FROM ${DB_PREFIX}user u
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            INNER JOIN ${DB_PREFIX}context ctx ON ra.contextid = ctx.id AND ctx.contextlevel = 50
+            INNER JOIN ${DB_PREFIX}course c ON ctx.instanceid = c.id
+            LEFT JOIN ${DB_PREFIX}logstore_standard_log l ON u.id = l.userid 
+                AND l.courseid = c.id
+                AND l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND (
+                    (l.action IN ('created', 'updated', 'uploaded') AND l.target IN ('course_module', 'course_content'))
+                    OR (l.component LIKE 'mod_%' AND l.action IN ('created', 'updated'))
+                    OR (l.objecttable IN ('resource', 'page', 'url', 'folder', 'book', 'assign', 'quiz', 'forum', 'label'))
+                )
+            WHERE u.deleted = 0 
+                AND r.shortname IN ('teacher', 'editingteacher')
+                AND c.id != 1
+            GROUP BY u.id, u.firstname, u.lastname, u.email, c.id, c.fullname, c.shortname
+            ORDER BY u.lastname, u.firstname, c.fullname
+        `;
+        const teacherComplianceResult = await executeQuery(teacherComplianceQuery);
+
+        // Process compliance data with status
+        const complianceData = (teacherComplianceResult.data || []).map(row => ({
+            ...row,
+            status: row.activity_count >= 4 ? 'green' : row.activity_count >= 1 ? 'yellow' : 'red',
+            status_label: row.activity_count >= 4 ? 'Memenuhi Target' : row.activity_count >= 1 ? 'Perlu Ditingkatkan' : 'Tidak Aktif'
+        }));
+
+        // 2. Activity Mix Chart - Static vs Interactive features
+        // Static: File, Resource, Page, URL, Folder, Book, Label
+        // Interactive: Quiz, Assignment, Forum, Chat, Workshop, Lesson
+        const staticActivityQuery = `
+            SELECT 
+                COUNT(*) as count,
+                'static' as type
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            WHERE l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND r.shortname IN ('teacher', 'editingteacher')
+                AND u.deleted = 0
+                AND (
+                    l.component IN ('mod_resource', 'mod_page', 'mod_url', 'mod_folder', 'mod_book', 'mod_label')
+                    OR l.objecttable IN ('resource', 'page', 'url', 'folder', 'book', 'label')
+                )
+                AND l.action IN ('created', 'updated', 'uploaded')
+        `;
+        const staticResult = await executeQuery(staticActivityQuery);
+
+        const interactiveActivityQuery = `
+            SELECT 
+                COUNT(*) as count,
+                'interactive' as type
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            WHERE l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND r.shortname IN ('teacher', 'editingteacher')
+                AND u.deleted = 0
+                AND (
+                    l.component IN ('mod_quiz', 'mod_assign', 'mod_forum', 'mod_chat', 'mod_workshop', 'mod_lesson', 'mod_choice', 'mod_feedback')
+                    OR l.objecttable IN ('quiz', 'assign', 'forum', 'chat', 'workshop', 'lesson', 'choice', 'feedback')
+                )
+                AND l.action IN ('created', 'updated')
+        `;
+        const interactiveResult = await executeQuery(interactiveActivityQuery);
+
+        // Detailed breakdown for chart
+        const activityBreakdownQuery = `
+            SELECT 
+                CASE 
+                    WHEN l.component IN ('mod_resource', 'mod_page', 'mod_url', 'mod_folder', 'mod_book', 'mod_label') 
+                        OR l.objecttable IN ('resource', 'page', 'url', 'folder', 'book', 'label')
+                    THEN 'File/Resource'
+                    WHEN l.component = 'mod_quiz' OR l.objecttable = 'quiz' THEN 'Quiz'
+                    WHEN l.component = 'mod_assign' OR l.objecttable = 'assign' THEN 'Assignment'
+                    WHEN l.component = 'mod_forum' OR l.objecttable = 'forum' THEN 'Forum'
+                    ELSE 'Lainnya'
+                END as feature_type,
+                COUNT(*) as count
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            WHERE l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND r.shortname IN ('teacher', 'editingteacher')
+                AND u.deleted = 0
+                AND l.action IN ('created', 'updated', 'uploaded')
+                AND (
+                    l.component LIKE 'mod_%'
+                    OR l.objecttable IN ('resource', 'page', 'url', 'folder', 'book', 'label', 'quiz', 'assign', 'forum')
+                )
+            GROUP BY feature_type
+            ORDER BY count DESC
+        `;
+        const breakdownResult = await executeQuery(activityBreakdownQuery);
+
+        const activityMix = {
+            static: parseInt(staticResult.data?.[0]?.count) || 0,
+            interactive: parseInt(interactiveResult.data?.[0]?.count) || 0,
+            breakdown: breakdownResult.data || []
+        };
+
+        // 3. Top 5 Engaged Courses - by student access logs
+        const topEngagedCoursesQuery = `
+            SELECT 
+                c.id as course_id,
+                c.fullname as course_name,
+                c.shortname as course_shortname,
+                COUNT(DISTINCT l.id) as total_access,
+                COUNT(DISTINCT l.userid) as unique_students,
+                GROUP_CONCAT(DISTINCT CONCAT(u_teacher.firstname, ' ', u_teacher.lastname) SEPARATOR ', ') as teachers
+            FROM ${DB_PREFIX}course c
+            INNER JOIN ${DB_PREFIX}logstore_standard_log l ON c.id = l.courseid
+            INNER JOIN ${DB_PREFIX}user u_student ON l.userid = u_student.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra_student ON u_student.id = ra_student.userid
+            INNER JOIN ${DB_PREFIX}role r_student ON ra_student.roleid = r_student.id
+            INNER JOIN ${DB_PREFIX}context ctx_student ON ra_student.contextid = ctx_student.id 
+                AND ctx_student.contextlevel = 50 AND ctx_student.instanceid = c.id
+            LEFT JOIN ${DB_PREFIX}context ctx_teacher ON ctx_teacher.instanceid = c.id AND ctx_teacher.contextlevel = 50
+            LEFT JOIN ${DB_PREFIX}role_assignments ra_teacher ON ctx_teacher.id = ra_teacher.contextid
+            LEFT JOIN ${DB_PREFIX}role r_teacher ON ra_teacher.roleid = r_teacher.id AND r_teacher.shortname IN ('teacher', 'editingteacher')
+            LEFT JOIN ${DB_PREFIX}user u_teacher ON ra_teacher.userid = u_teacher.id AND u_teacher.deleted = 0
+            WHERE l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND c.id != 1
+                AND r_student.shortname = 'student'
+                AND u_student.deleted = 0
+            GROUP BY c.id, c.fullname, c.shortname
+            ORDER BY total_access DESC
+            LIMIT 5
+        `;
+        const topEngagedResult = await executeQuery(topEngagedCoursesQuery);
+
+        // Summary stats - Total teachers
+        const totalTeachersQuery = `
+            SELECT COUNT(DISTINCT u.id) as total
+            FROM ${DB_PREFIX}user u
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            WHERE u.deleted = 0 AND r.shortname IN ('teacher', 'editingteacher')
+        `;
+        const totalTeachersResult = await executeQuery(totalTeachersQuery);
+        const totalTeachers = parseInt(totalTeachersResult.data?.[0]?.total) || 0;
+
+        // Active teachers this month
+        const activeTeachersQuery = `
+            SELECT COUNT(DISTINCT u.id) as count
+            FROM ${DB_PREFIX}user u
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            INNER JOIN ${DB_PREFIX}logstore_standard_log l ON u.id = l.userid
+            WHERE u.deleted = 0 
+                AND r.shortname IN ('teacher', 'editingteacher')
+                AND l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND l.action IN ('created', 'updated', 'uploaded')
+        `;
+        const activeTeachersResult = await executeQuery(activeTeachersQuery);
+        const activeTeachers = parseInt(activeTeachersResult.data?.[0]?.count) || 0;
+
+        // Total Student Interactions this month
+        const studentInteractionsQuery = `
+            SELECT COUNT(*) as count
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            INNER JOIN ${DB_PREFIX}context ctx ON ra.contextid = ctx.id AND ctx.contextlevel = 50
+            WHERE l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND r.shortname = 'student'
+                AND u.deleted = 0
+        `;
+        const studentInteractionsResult = await executeQuery(studentInteractionsQuery);
+        const currentInteractions = parseInt(studentInteractionsResult.data?.[0]?.count) || 0;
+
+        // Previous month interactions for comparison
+        const prevInteractionsQuery = `
+            SELECT COUNT(*) as count
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            INNER JOIN ${DB_PREFIX}context ctx ON ra.contextid = ctx.id AND ctx.contextlevel = 50
+            WHERE l.timecreated BETWEEN ${prevStartTimestamp} AND ${prevEndTimestamp}
+                AND r.shortname = 'student'
+                AND u.deleted = 0
+        `;
+        const prevInteractionsResult = await executeQuery(prevInteractionsQuery);
+        const prevInteractions = parseInt(prevInteractionsResult.data?.[0]?.count) || 1;
+        const interactionChange = Math.round(((currentInteractions - prevInteractions) / prevInteractions) * 100);
+
+        // Daily Student Engagement Trend
+        const dailyTrendQuery = `
+            SELECT 
+                DATE(FROM_UNIXTIME(l.timecreated)) as date,
+                COUNT(DISTINCT l.userid) as unique_users,
+                COUNT(*) as total_activities
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            WHERE l.timecreated BETWEEN ${startTimestamp} AND ${endTimestamp}
+                AND r.shortname = 'student'
+                AND u.deleted = 0
+            GROUP BY DATE(FROM_UNIXTIME(l.timecreated))
+            ORDER BY date ASC
+        `;
+        const dailyTrendResult = await executeQuery(dailyTrendQuery);
+        const dailyTrend = (dailyTrendResult.data || []).map(row => ({
+            date: row.date,
+            day: new Date(row.date).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric' }),
+            users: parseInt(row.unique_users) || 0,
+            activities: parseInt(row.total_activities) || 0
+        }));
+
+        // Calculate compliance stats
+        const greenCount = complianceData.filter(d => d.status === 'green').length;
+        const yellowCount = complianceData.filter(d => d.status === 'yellow').length;
+        const redCount = complianceData.filter(d => d.status === 'red').length;
+        const totalEntries = complianceData.length || 1;
+        const complianceRate = Math.round((greenCount / totalEntries) * 100);
+        const nonCompliantCount = yellowCount + redCount;
+
+        // Calculate activity mix percentages
+        const staticCount = activityMix.static;
+        const interactiveCount = activityMix.interactive;
+        const totalMix = staticCount + interactiveCount || 1;
+        activityMix.staticPercentage = Math.round((staticCount / totalMix) * 100);
+        activityMix.interactivePercentage = Math.round((interactiveCount / totalMix) * 100);
+
+        res.json({
+            period: {
+                month: monthName,
+                startDate: monthStart.toISOString().split('T')[0],
+                endDate: monthEnd.toISOString().split('T')[0]
+            },
+            summary: {
+                totalTeachers: totalTeachers,
+                activeTeachers: activeTeachers,
+                participationRate: totalTeachers > 0 ? Math.round((activeTeachers / totalTeachers) * 100) : 0,
+                complianceRate: complianceRate,
+                nonCompliantCount: nonCompliantCount,
+                totalStudentInteractions: currentInteractions,
+                interactionChange: interactionChange,
+                compliance: {
+                    green: greenCount,
+                    yellow: yellowCount,
+                    red: redCount
+                }
+            },
+            teacherCompliance: complianceData,
+            activityMix: activityMix,
+            dailyEngagement: dailyTrend,
+            topEngagedCourses: topEngagedResult.data || []
+        });
+
+    } catch (error) {
+        console.error('Teacher compliance report error:', error);
+        res.status(500).json({ error: 'Failed to generate teacher compliance report' });
+    }
+});
+
+// ============================================================
+// GET /api/reports/teacher-compliance/export
+// Export data for PDF generation with date range
+// ============================================================
+router.get('/teacher-compliance/export', async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'startDate and endDate are required' });
+        }
+
+        const dateRange = getDateRange(startDate, endDate);
+        const { startTimestamp, endTimestamp } = dateRange;
+
+        // 1. Statistik Pengguna
+        // Total Pengguna Terdaftar
+        const totalUsersQuery = `
+            SELECT COUNT(*) as total FROM ${DB_PREFIX}user WHERE deleted = 0
+        `;
+        const totalUsersResult = await executeQuery(totalUsersQuery);
+        const totalUsers = totalUsersResult.data?.[0]?.total || 0;
+
+        // Pengguna Aktif dalam range
+        const activeUsersQuery = `
+            SELECT COUNT(DISTINCT userid) as total
+            FROM ${DB_PREFIX}logstore_standard_log
+            WHERE timecreated BETWEEN ? AND ?
+        `;
+        const activeUsersResult = await executeQuery(activeUsersQuery, [startTimestamp, endTimestamp]);
+        const activeUsers = activeUsersResult.data?.[0]?.total || 0;
+
+        // Pengguna Baru Terdaftar dalam range
+        const newUsersQuery = `
+            SELECT COUNT(*) as total 
+            FROM ${DB_PREFIX}user 
+            WHERE deleted = 0 AND timecreated BETWEEN ? AND ?
+        `;
+        const newUsersResult = await executeQuery(newUsersQuery, [startTimestamp, endTimestamp]);
+        const newUsers = newUsersResult.data?.[0]?.total || 0;
+
+        // Akun yang Tidak Pernah Login
+        const neverLoggedQuery = `
+            SELECT COUNT(*) as total 
+            FROM ${DB_PREFIX}user 
+            WHERE deleted = 0 AND (lastlogin = 0 OR lastlogin IS NULL)
+        `;
+        const neverLoggedResult = await executeQuery(neverLoggedQuery);
+        const neverLogged = neverLoggedResult.data?.[0]?.total || 0;
+
+        const statistikPengguna = [
+            { no: 1, keterangan: 'Total Pengguna Terdaftar', jumlah: totalUsers, keteranganTambahan: 'Guru, Siswa, Admin' },
+            { no: 2, keterangan: 'Pengguna Aktif Periode Ini', jumlah: activeUsers, keteranganTambahan: 'Yang login minimal 1x' },
+            { no: 3, keterangan: 'Pengguna Baru Terdaftar', jumlah: newUsers, keteranganTambahan: 'Siswa/Guru Baru' },
+            { no: 4, keterangan: 'Akun yang Tidak Pernah Login', jumlah: neverLogged, keteranganTambahan: 'Dari total pengguna' }
+        ];
+
+        // 2. Aktivitas Guru - log aktivitas guru dengan detail per hari
+        const teacherActivityQuery = `
+            SELECT 
+                u.firstname as nama,
+                DATE_FORMAT(FROM_UNIXTIME(l.timecreated), '%d-%m-%Y') as tanggal,
+                COALESCE(
+                    GROUP_CONCAT(
+                        DISTINCT 
+                        CASE 
+                            WHEN l.target = 'course_module' AND l.action = 'created' THEN 'Upload Materi'
+                            WHEN l.component LIKE 'mod_assign%' AND l.action = 'created' THEN 'Membuat Penugasan'
+                            WHEN l.component LIKE 'mod_quiz%' AND l.action = 'created' THEN 'Membuat Kuis'
+                            WHEN l.action = 'graded' THEN 'Memberi Nilai'
+                            ELSE NULL
+                        END
+                        SEPARATOR ', '
+                    ),
+                    'Mengakses LMS'
+                ) as aktivitas,
+                GROUP_CONCAT(DISTINCT c.shortname SEPARATOR ', ') as kelas
+            FROM ${DB_PREFIX}logstore_standard_log l
+            INNER JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            INNER JOIN ${DB_PREFIX}course c ON l.courseid = c.id AND c.id > 1
+            INNER JOIN ${DB_PREFIX}role_assignments ra ON u.id = ra.userid
+            INNER JOIN ${DB_PREFIX}role r ON ra.roleid = r.id
+            WHERE l.timecreated BETWEEN ? AND ?
+            AND r.shortname IN ('teacher', 'editingteacher')
+            AND u.deleted = 0
+            AND l.courseid > 1
+            GROUP BY u.id, DATE_FORMAT(FROM_UNIXTIME(l.timecreated), '%d-%m-%Y')
+            ORDER BY tanggal DESC, nama ASC
+            LIMIT 200
+        `;
+        const teacherActivityResult = await executeQuery(teacherActivityQuery, [startTimestamp, endTimestamp]);
+        const aktivitasGuru = (teacherActivityResult.data || []).map((row, idx) => ({
+            no: idx + 1,
+            nama: row.nama,
+            tanggal: row.tanggal,
+            aktivitas: row.aktivitas || 'Mengakses LMS',
+            kelas: row.kelas || '-'
+        }));
+
+        // 3. Aktivitas Kursus - materi dan tugas baru per kursus
+        const courseActivityQuery = `
+            SELECT 
+                c.fullname as namaKelas,
+                COUNT(DISTINCT CASE 
+                    WHEN m.name IN ('resource', 'url', 'page', 'folder') 
+                    AND cm.added BETWEEN ? AND ?
+                    THEN cm.id 
+                END) as jumlahMateriBaru,
+                COUNT(DISTINCT CASE 
+                    WHEN m.name IN ('assign', 'quiz') 
+                    AND cm.added BETWEEN ? AND ?
+                    THEN cm.id 
+                END) as jumlahTugasKuisBaru,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT u2.firstname SEPARATOR ', ')
+                    FROM ${DB_PREFIX}context ctx2
+                    INNER JOIN ${DB_PREFIX}role_assignments ra2 ON ra2.contextid = ctx2.id
+                    INNER JOIN ${DB_PREFIX}role r2 ON ra2.roleid = r2.id
+                    INNER JOIN ${DB_PREFIX}user u2 ON ra2.userid = u2.id
+                    WHERE ctx2.instanceid = c.id 
+                    AND ctx2.contextlevel = 50
+                    AND r2.shortname IN ('teacher', 'editingteacher')
+                    AND u2.deleted = 0
+                ) as guru
+            FROM ${DB_PREFIX}course c
+            LEFT JOIN ${DB_PREFIX}course_modules cm ON c.id = cm.course
+            LEFT JOIN ${DB_PREFIX}modules m ON cm.module = m.id
+            WHERE c.visible = 1 AND c.id > 1 AND c.fullname NOT LIKE '%TEKNOLOGI PENDIDIKAN%'
+            GROUP BY c.id
+            HAVING jumlahMateriBaru > 0 OR jumlahTugasKuisBaru > 0
+            ORDER BY (jumlahMateriBaru + jumlahTugasKuisBaru) DESC
+            LIMIT 50
+        `;
+        const courseActivityResult = await executeQuery(courseActivityQuery, [startTimestamp, endTimestamp, startTimestamp, endTimestamp]);
+        const aktivitasKursus = (courseActivityResult.data || []).map((row, idx) => ({
+            no: idx + 1,
+            namaKelas: row.namaKelas,
+            jumlahMateriBaru: row.jumlahMateriBaru || 0,
+            jumlahTugasKuisBaru: row.jumlahTugasKuisBaru || 0,
+            guru: row.guru || '-'
+        }));
+
+        res.json({
+            period: {
+                startDate: dateRange.startDate,
+                endDate: dateRange.endDate
+            },
+            statistikPengguna,
+            aktivitasGuru,
+            aktivitasKursus
+        });
+
+    } catch (error) {
+        console.error('Export report error:', error);
+        res.status(500).json({ error: 'Failed to generate export data' });
+    }
+});
+
 export default router;
+

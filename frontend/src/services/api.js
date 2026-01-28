@@ -68,4 +68,8 @@ export const reportsApi = {
         const query = new URLSearchParams(params).toString();
         return fetchApi(`/reports/course-activity${query ? `?${query}` : ''}`);
     },
+    getTeacherCompliance: () => {
+        return fetchApi('/reports/teacher-compliance');
+    },
 };
+
