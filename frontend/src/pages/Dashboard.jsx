@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Users, BookOpen, Activity, UserCheck, TrendingUp, TrendingDown, Loader2 } from 'lucide-react'
+import { Users, BookOpen, Activity, UserCheck, TrendingUp, TrendingDown, Loader2, Cloud, Pencil, Shield, Monitor } from 'lucide-react'
 import { dashboardApi, logsApi } from '../services/api'
+import { Link } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 
 function StatCard({ title, value, icon: Icon, trend, color, isLoading }) {
@@ -60,22 +61,95 @@ function ChartCard({ title, subtitle, children, isLoading }) {
     )
 }
 
+function RecentActivityCard({ activities, isLoading }) {
+    const iconConfig = {
+        backup: { icon: Cloud, bgColor: 'bg-green-500', textColor: 'text-white' },
+        update: { icon: Pencil, bgColor: 'bg-purple-500', textColor: 'text-white' },
+        permission: { icon: Shield, bgColor: 'bg-yellow-500', textColor: 'text-white' },
+        login: { icon: Monitor, bgColor: 'bg-gray-400', textColor: 'text-white' },
+    }
+
+    return (
+        <div className="glass-card p-6">
+            <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-semibold text-white">Recent Activity</h3>
+                <Link
+                    to="/logs"
+                    className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+                >
+                    View All Logs
+                </Link>
+            </div>
+            {isLoading ? (
+                <div className="h-48 flex items-center justify-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
+                </div>
+            ) : (
+                <div className="space-y-4">
+                    {activities.map((activity, index) => {
+                        const config = iconConfig[activity.type] || iconConfig.login
+                        const IconComponent = config.icon
+                        return (
+                            <div key={index} className="flex items-start gap-4">
+                                <div className={`w-10 h-10 rounded-full ${config.bgColor} flex items-center justify-center flex-shrink-0`}>
+                                    <IconComponent className={`w-5 h-5 ${config.textColor}`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-white text-sm" dangerouslySetInnerHTML={{ __html: activity.message }}></p>
+                                    <p className="text-dark-500 text-xs mt-1">{activity.time}</p>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
+        </div>
+    )
+}
+
 export default function Dashboard() {
     const [stats, setStats] = useState(null)
     const [loginActivity, setLoginActivity] = useState(null)
+    const [recentActivities, setRecentActivities] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
+
+    // Demo data for recent activities (fallback)
+    const demoActivities = [
+        {
+            type: 'backup',
+            message: 'System backup completed successfully',
+            time: 'Today, 02:15 AM'
+        },
+        {
+            type: 'update',
+            message: "User '<span class=\"text-primary-400\">John Doe</span>' updated a course module",
+            time: '2 hours ago'
+        },
+        {
+            type: 'permission',
+            message: "Role permission updated: '<span class=\"text-primary-400\">Teacher</span>' access",
+            time: '5 hours ago'
+        },
+        {
+            type: 'login',
+            message: "System Admin login detected from <span class=\"text-primary-400\">192.168.1.1</span>",
+            time: 'Yesterday, 11:45 PM'
+        }
+    ]
 
     useEffect(() => {
         async function fetchData() {
             try {
                 setLoading(true)
-                const [overviewData, activityData] = await Promise.all([
+                const [overviewData, activityData, recentData] = await Promise.all([
                     dashboardApi.getOverview(),
                     logsApi.getLoginActivity(7),
+                    logsApi.getRecentActivity(10),
                 ])
                 setStats(overviewData)
                 setLoginActivity(activityData)
+                setRecentActivities(recentData.activities || [])
             } catch (err) {
                 setError(err.message)
                 // Use demo data when API is not available
@@ -96,6 +170,7 @@ export default function Dashboard() {
                         { date: '2026-01-26', login_count: 267, unique_users: 195 },
                     ]
                 })
+                setRecentActivities(demoActivities)
             } finally {
                 setLoading(false)
             }
@@ -287,32 +362,7 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                <div className="glass-card p-6">
-                    <h3 className="text-lg font-semibold text-white mb-4">Recent Updates</h3>
-                    <div className="space-y-3 text-sm">
-                        <div className="flex gap-3">
-                            <div className="w-2 h-2 rounded-full bg-green-400 mt-2"></div>
-                            <div>
-                                <p className="text-white">Dashboard initialized</p>
-                                <p className="text-dark-500 text-xs">Just now</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-3">
-                            <div className="w-2 h-2 rounded-full bg-blue-400 mt-2"></div>
-                            <div>
-                                <p className="text-white">API endpoints ready</p>
-                                <p className="text-dark-500 text-xs">System startup</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-3">
-                            <div className="w-2 h-2 rounded-full bg-purple-400 mt-2"></div>
-                            <div>
-                                <p className="text-white">Charts configured</p>
-                                <p className="text-dark-500 text-xs">Recharts loaded</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <RecentActivityCard activities={recentActivities} isLoading={loading} />
             </div>
         </div>
     )

@@ -48,6 +48,7 @@ export const usersApi = {
 export const logsApi = {
     getLoginActivity: (days = 7) => fetchApi(`/logs/login-activity?days=${days}`),
     getRecent: (limit = 50) => fetchApi(`/logs/recent?limit=${limit}`),
+    getRecentActivity: (limit = 10) => fetchApi(`/logs/recent-activity?limit=${limit}`),
 };
 
 // Reports API
@@ -71,5 +72,26 @@ export const reportsApi = {
     getTeacherCompliance: () => {
         return fetchApi('/reports/teacher-compliance');
     },
+    getExecutiveSummary: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/executive-summary${query ? `?${query}` : ''}`);
+    },
+    getTeacherDetailMaster: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/teacher-detail-master${query ? `?${query}` : ''}`);
+    },
+    getTeacherDetail: (id, params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/teacher-detail/${id}${query ? `?${query}` : ''}`);
+    },
+    getStudentDetailMaster: (params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/student-detail-master${query ? `?${query}` : ''}`);
+    },
+    getStudentDetail: (id, params = {}) => {
+        const query = new URLSearchParams(params).toString();
+        return fetchApi(`/reports/student-detail/${id}${query ? `?${query}` : ''}`);
+    },
 };
+
 

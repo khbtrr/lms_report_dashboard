@@ -134,4 +134,135 @@ router.get('/recent', async (req, res) => {
     }
 });
 
+// GET /api/logs/recent-activity
+// Returns recent activity logs formatted for dashboard display
+router.get('/recent-activity', async (req, res) => {
+    try {
+        const { limit = 10 } = req.query;
+        const limitVal = parseInt(limit);
+
+        // Get recent activities from Moodle logs with meaningful events
+        const activityQuery = `
+            SELECT 
+                l.id,
+                l.timecreated,
+                l.action,
+                l.target,
+                l.objecttable,
+                l.component,
+                l.eventname,
+                l.ip,
+                u.firstname,
+                u.lastname,
+                c.fullname as course_name
+            FROM ${DB_PREFIX}logstore_standard_log l
+            LEFT JOIN ${DB_PREFIX}user u ON l.userid = u.id
+            LEFT JOIN ${DB_PREFIX}course c ON l.courseid = c.id
+            WHERE l.userid > 0
+            ORDER BY l.timecreated DESC
+            LIMIT ${limitVal}
+        `;
+
+        const result = await executeQuery(activityQuery);
+
+        if (!result.success) {
+            return res.status(500).json({ error: 'Failed to fetch recent activity', details: result.error });
+        }
+
+        // Format activities for frontend
+        const activities = result.data.map(log => {
+            const userName = log.firstname && log.lastname
+                ? `${log.firstname} ${log.lastname}`
+                : 'System';
+
+            // Determine activity type and message
+            let type = 'login';
+            let message = '';
+
+            if (log.action === 'loggedin' || log.eventname?.includes('loggedin')) {
+                type = 'login';
+                message = `User '${userName}' logged in from ${log.ip || 'unknown IP'}`;
+            } else if (log.action === 'loggedout' || log.eventname?.includes('loggedout')) {
+                type = 'login';
+                message = `User '${userName}' logged out`;
+            } else if (log.action === 'created') {
+                type = 'update';
+                if (log.target === 'course_module' || log.objecttable === 'course_modules') {
+                    message = `User '${userName}' created a new module in course '${log.course_name || 'Unknown'}'`;
+                } else if (log.target === 'user') {
+                    message = `New user '${userName}' was created`;
+                } else {
+                    message = `User '${userName}' created ${log.target || 'content'}`;
+                }
+            } else if (log.action === 'updated') {
+                type = 'update';
+                if (log.target === 'course_module' || log.objecttable === 'course_modules') {
+                    message = `User '${userName}' updated a module in course '${log.course_name || 'Unknown'}'`;
+                } else if (log.target === 'course') {
+                    message = `User '${userName}' updated course '${log.course_name || 'Unknown'}'`;
+                } else {
+                    message = `User '${userName}' updated ${log.target || 'content'}`;
+                }
+            } else if (log.action === 'assigned' || log.action === 'unassigned') {
+                type = 'permission';
+                message = `Role ${log.action} for user '${userName}'`;
+            } else if (log.action === 'viewed') {
+                type = 'login';
+                if (log.target === 'course') {
+                    message = `User '${userName}' viewed course '${log.course_name || 'Unknown'}'`;
+                } else {
+                    message = `User '${userName}' viewed ${log.target || 'content'}`;
+                }
+            } else if (log.component === 'tool_recyclebin' || log.action === 'deleted') {
+                type = 'backup';
+                message = `User '${userName}' deleted ${log.target || 'content'}`;
+            } else {
+                // Generic fallback
+                message = `User '${userName}' performed ${log.action} on ${log.target || 'system'}`;
+            }
+
+            // Format time
+            const timestamp = log.timecreated * 1000;
+            const now = Date.now();
+            const diff = now - timestamp;
+
+            let timeStr;
+            const minutes = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+
+            if (minutes < 1) {
+                timeStr = 'Just now';
+            } else if (minutes < 60) {
+                timeStr = `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+            } else if (hours < 24) {
+                timeStr = `${hours} hour${hours > 1 ? 's' : ''} ago`;
+            } else if (days === 1) {
+                const date = new Date(timestamp);
+                timeStr = `Yesterday, ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+            } else if (days < 7) {
+                timeStr = `${days} day${days > 1 ? 's' : ''} ago`;
+            } else {
+                const date = new Date(timestamp);
+                timeStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            }
+
+            return {
+                id: log.id,
+                type,
+                message,
+                time: timeStr,
+                timestamp: log.timecreated
+            };
+        });
+
+        res.json({ activities });
+
+    } catch (error) {
+        console.error('Recent activity error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 export default router;
+
